@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Асинхронная загрузка и объединение содержимого из списка URL.
-Разбивает результат на файлы по количеству строк.
-Удаляет нерабочие ссылки из исходного файла (опционально).
+Асинхронно загружает файлы по ссылкам, извлекает VPN-конфиги (ss://, vless://, vmess://, trojan://, hysteria2://)
+и разбивает их на файлы по 5000 строк в папке config.
 """
 
 import argparse
@@ -10,16 +9,16 @@ import sys
 import asyncio
 import aiohttp
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Асинхронно загрузить содержимое по ссылкам из файла, объединить и разбить на файлы по строкам"
+        description="Загружает файлы по ссылкам, извлекает VPN-конфиги и разбивает на файлы"
     )
     parser.add_argument(
         "--input", "-i",
         default="urls.txt",
-        help="Файл со списком URL (по одному на строку, пустые строки игнорируются). По умолчанию: urls.txt"
+        help="Файл со списком URL (по одному на строку). По умолчанию: urls.txt"
     )
     parser.add_argument(
         "--output-dir", "-o",
@@ -29,8 +28,8 @@ def parse_args():
     parser.add_argument(
         "--lines-per-file", "-l",
         type=int,
-        default=10000,
-        help="Максимальное количество строк в одном файле. По умолчанию: 10000"
+        default=5000,
+        help="Максимальное количество строк в одном файле. По умолчанию: 5000"
     )
     parser.add_argument(
         "--prefix",
@@ -50,20 +49,21 @@ def parse_args():
         help="Количество одновременных запросов. По умолчанию: 30"
     )
     parser.add_argument(
-        "--separator",
-        default="--- [ {url} ] ---\n",
-        help="Разделитель между содержимым разных URL. "
-             "Может содержать {url} для подстановки адреса. "
-             "Если указать пустую строку, разделитель не добавляется. "
-             "По умолчанию: '--- [ {url} ] ---\\n'"
-    )
-    parser.add_argument(
         "--clean-urls",
         action="store_true",
-        help="Удалить нерабочие ссылки из входного файла (перезаписать его только рабочими). "
-             "Нерабочие ссылки сохраняются в файл broken_urls.txt"
+        help="Удалить из входного файла ссылки, которые не дали ни одного конфига. "
+             "Нерабочие ссылки сохраняются в broken_urls.txt"
     )
     return parser.parse_args()
+
+# Допустимые префиксы VPN-конфигов
+VPN_PREFIXES: Set[str] = {
+    "ss://",
+    "vless://",
+    "vmess://",
+    "trojan://",
+    "hysteria2://",
+}
 
 def read_urls(file_path: Path) -> List[str]:
     """Читает непустые строки из файла."""
@@ -81,34 +81,49 @@ def write_urls(file_path: Path, urls: List[str]):
         for url in urls:
             f.write(url + '\n')
 
-async def download_content(session: aiohttp.ClientSession, url: str, timeout: int) -> Optional[str]:
-    """Асинхронно скачивает содержимое URL. Возвращает текст или None при ошибке."""
-    headers = {'User-Agent': 'Mozilla/5.0 (compatible; MergeURLsBot/1.0)'}
+def extract_vpn_lines(text: str) -> List[str]:
+    """Извлекает из текста строки, начинающиеся с VPN-префиксов."""
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if any(line.startswith(prefix) for prefix in VPN_PREFIXES):
+            lines.append(line)
+    return lines
+
+async def fetch_and_extract(session: aiohttp.ClientSession, url: str, timeout: int) -> Optional[List[str]]:
+    """Загружает URL и возвращает список найденных VPN-строк или None при ошибке."""
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; VPNConfigsBot/1.0)'}
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout), headers=headers) as resp:
             resp.raise_for_status()
-            return await resp.text()
+            content = await resp.text()
+            vpn_lines = extract_vpn_lines(content)
+            if vpn_lines:
+                return vpn_lines
+            else:
+                print(f"⚠️  В {url} не найдено VPN-строк", file=sys.stderr)
+                return None
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         print(f"⚠️  Ошибка при загрузке {url} — {e}", file=sys.stderr)
         return None
     except UnicodeDecodeError:
-        print(f"⚠️  Не удалось декодировать содержимое {url} как UTF-8", file=sys.stderr)
+        print(f"⚠️  Не удалось декодировать {url} как UTF-8", file=sys.stderr)
         return None
 
-async def process_urls(urls: List[str], concurrency: int, timeout: int) -> List[Optional[str]]:
-    """Асинхронно загружает все URL, возвращает список содержимого в исходном порядке."""
+async def process_urls(urls: List[str], concurrency: int, timeout: int) -> List[Optional[List[str]]]:
+    """Асинхронно обрабатывает URL, возвращает списки найденных строк (в исходном порядке)."""
     semaphore = asyncio.Semaphore(concurrency)
 
     async def fetch_with_semaphore(session, url):
         async with semaphore:
-            return await download_content(session, url, timeout)
+            return await fetch_and_extract(session, url, timeout)
 
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_with_semaphore(session, url) for url in urls]
         return await asyncio.gather(*tasks)
 
-def write_files(lines: List[str], output_dir: Path, prefix: str, lines_per_file: int):
-    """Записывает строки в файлы, разбивая по количеству строк."""
+def write_split_files(lines: List[str], output_dir: Path, prefix: str, lines_per_file: int):
+    """Разбивает строки на файлы и записывает."""
     output_dir.mkdir(parents=True, exist_ok=True)
     if not lines:
         print("⚠️  Нет строк для записи", file=sys.stderr)
@@ -121,7 +136,9 @@ def write_files(lines: List[str], output_dir: Path, prefix: str, lines_per_file:
         filename = f"{prefix}{file_index:03d}.txt"
         filepath = output_dir / filename
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.writelines(chunk)
+            f.write('\n'.join(chunk))
+            if chunk:
+                f.write('\n')
         total_written += len(chunk)
         print(f"📄 Записан файл: {filepath} ({len(chunk)} строк)", file=sys.stderr)
         file_index += 1
@@ -141,42 +158,38 @@ def main():
         return
 
     print(f"📥 Начинаем асинхронную загрузку {len(urls)} URL (параллелизм: {args.concurrency})...", file=sys.stderr)
-    contents = asyncio.run(process_urls(urls, args.concurrency, args.timeout))
+    results = asyncio.run(process_urls(urls, args.concurrency, args.timeout))
 
-    # Формируем общий список строк в исходном порядке, добавляя разделители
-    all_lines = []
+    # Собираем все VPN-строки и отслеживаем рабочие/нерабочие URL
+    all_vpn_lines = []
     working_urls = []
     broken_urls = []
-    first_success = True
 
-    for url, content in zip(urls, contents):
-        if content is None:
+    for url, vpn_list in zip(urls, results):
+        if vpn_list is not None:
+            working_urls.append(url)
+            all_vpn_lines.extend(vpn_list)
+        else:
             broken_urls.append(url)
-            continue
-        working_urls.append(url)
-        if not first_success and args.separator:
-            sep = args.separator.format(url=url)
-            all_lines.extend(sep.splitlines(keepends=True))
-        first_success = False
-        all_lines.extend(content.splitlines(keepends=True))
 
-    print(f"✅ Загрузка завершена. Успешно: {len(working_urls)}, пропущено: {len(broken_urls)}", file=sys.stderr)
+    print(f"✅ Обработка завершена. Успешно: {len(working_urls)}, пропущено: {len(broken_urls)}", file=sys.stderr)
 
-    # Сохраняем нерабочие ссылки в файл
+    # Сохраняем нерабочие URL
     if broken_urls:
         broken_path = input_path.parent / "broken_urls.txt"
         write_urls(broken_path, broken_urls)
         print(f"📝 Нерабочие ссылки сохранены в {broken_path}", file=sys.stderr)
 
-    # Опционально очищаем входной файл от нерабочих ссылок
+    # Опционально очищаем входной файл
     if args.clean_urls:
         write_urls(input_path, working_urls)
-        print(f"🧹 Входной файл {input_path} очищен (оставлено {len(working_urls)} рабочих ссылок)", file=sys.stderr)
+        print(f"🧹 Входной файл {input_path} очищен (оставлено {len(working_urls)} ссылок)", file=sys.stderr)
 
-    if all_lines:
-        write_files(all_lines, Path(args.output_dir), args.prefix, args.lines_per_file)
+    # Записываем найденные строки
+    if all_vpn_lines:
+        write_split_files(all_vpn_lines, Path(args.output_dir), args.prefix, args.lines_per_file)
     else:
-        print("⚠️  Нет успешно загруженного содержимого для записи", file=sys.stderr)
+        print("⚠️  Не найдено ни одной VPN-строки", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

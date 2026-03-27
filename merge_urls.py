@@ -34,7 +34,9 @@ def parse_args():
         "--separator",
         default="\n--- [ {url} ] ---\n",
         help="Разделитель между содержимым разных URL. "
-             "Может содержать {url} для подстановки адреса. По умолчанию: '\\n--- [ {url} ] ---\\n'"
+             "Может содержать {url} для подстановки адреса. "
+             "Если указать пустую строку, разделитель не добавляется. "
+             "По умолчанию: '\\n--- [ {url} ] ---\\n'"
     )
     return parser.parse_args()
 
@@ -53,7 +55,7 @@ def download_content(url, timeout):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (compatible; MergeURLsBot/1.0)'}
         resp = requests.get(url, timeout=timeout, headers=headers)
-        resp.raise_for_status()  # вызовет исключение для 4xx/5xx
+        resp.raise_for_status()
         return resp.text
     except requests.exceptions.RequestException as e:
         print(f"⚠️  Ошибка при загрузке {url}: {e}", file=sys.stderr)
@@ -83,15 +85,15 @@ def main():
 
     with open(output_path, 'w', encoding='utf-8') as out_f:
         for idx, url in enumerate(urls):
-            print(f"📥 Обработка {url}...", file=sys.stderr)
+            print(f"📥 Обработка {url}", file=sys.stderr)   # убрали троеточие
             content = download_content(url, args.timeout)
             if content is None:
                 error_count += 1
                 continue
 
             success_count += 1
-            # Добавляем разделитель перед содержимым, кроме первого блока
-            if success_count > 1:
+            # Добавляем разделитель, если он не пустой и это не первый успешный блок
+            if args.separator and success_count > 1:
                 separator = args.separator.format(url=url)
                 out_f.write(separator)
             out_f.write(content)

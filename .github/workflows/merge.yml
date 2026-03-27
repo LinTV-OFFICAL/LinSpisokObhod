@@ -2,7 +2,7 @@ name: Merge URLs Content
 
 on:
   schedule:
-    - cron: '0 21 * * *'   # 00:00 MSK
+    - cron: '0 21 * * *'   # 00:00 MSK (UTC+3)
   push:
     branches: [ main, master ]
   workflow_dispatch:
@@ -24,9 +24,15 @@ jobs:
         run: pip install aiohttp
 
       - name: Run merge script
-        run: python merge_urls.py --input urls.txt --output-dir config --lines-per-file 5000 --concurrency 20
+        run: python merge_urls.py --input urls.txt --output-dir config --lines-per-file 10000 --concurrency 30 --clean-urls
 
       - name: Upload config folder
         uses: actions/upload-artifact@v4
         with:
           path: config/
+
+      - name: Upload broken URLs (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: broken-urls
+          path: broken_urls.txt

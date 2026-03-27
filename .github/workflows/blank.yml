@@ -1,0 +1,36 @@
+name: Merge URLs Content
+
+on:
+  # Запуск каждый день в 00:00 по московскому времени (21:00 UTC)
+  schedule:
+    - cron: '0 21 * * *'
+  # Запуск при push в основные ветки
+  push:
+    branches: [ main, master ]
+  # Возможность запустить вручную через интерфейс GitHub
+  workflow_dispatch:
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run merge script
+        run: python merge_urls.py --input urls.txt --output merged.txt
+
+      - name: Upload merged file (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-content
+          path: merged.txt

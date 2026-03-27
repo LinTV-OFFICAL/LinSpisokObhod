@@ -1,19 +1,20 @@
-name: Merge URLs Content
+name: Fetch VPN Configs
 
 on:
   schedule:
     - cron: '0 21 * * *'   # 00:00 MSK (UTC+3)
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  merge:
+  fetch:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,16 +24,13 @@ jobs:
       - name: Install dependencies
         run: pip install aiohttp
 
-      - name: Run merge script
-        run: python merge_urls.py --input urls.txt --output-dir config --lines-per-file 10000 --concurrency 30 --clean-urls
+      - name: Run fetch script
+        run: python merge.py --input urls.txt --output-dir config --lines-per-file 5000 --concurrency 30 --clean-urls
 
-      - name: Upload config folder
-        uses: actions/upload-artifact@v4
-        with:
-          path: config/
-
-      - name: Upload broken URLs (optional)
-        uses: actions/upload-artifact@v4
-        with:
-          name: broken-urls
-          path: broken_urls.txt
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/ broken_urls.txt urls.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "Automated update: fetch VPN configs [skip ci]"
+          git push

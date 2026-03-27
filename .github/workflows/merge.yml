@@ -21,13 +21,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install aiohttp
 
       - name: Run merge script
-        run: python merge_urls.py --input urls.txt --output-dir config --lines-per-file 1500
+        run: python merge_urls.py --input urls.txt --output-dir config --lines-per-file 5000 --concurrency 20
 
-      - name: Upload config folder (optional)
+      - name: Upload config folder
         uses: actions/upload-artifact@v4
         with:
-          name: merged-files
           path: config/

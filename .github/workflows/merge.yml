@@ -25,7 +25,7 @@ jobs:
         run: pip install aiohttp
 
       - name: Run fetch script
-        run: python merge.py --input urls.txt --output-dir config --lines-per-file 5000 --concurrency 30 --clean-urls
+        run: python parser.py --input urls.txt --output-dir config --lines-per-file 5000 --concurrency 30 --clean-urls
 
       - name: Commit and push changes
         run: |

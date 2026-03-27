@@ -1,6 +1,3 @@
-# ИСТОЧНИКИ СОДЕРЖАЩИЕ КОНФИГИ VLESS
-# Обновлено: 2026-02-26 22:40:00
-
 https://raw.githubusercontent.com/main/hackbar/main/public/payloads/paths.txt
 https://raw.githubusercontent.com/0i0/deepme-crawler/main/crawled.repos/T.txt
 https://raw.githubusercontent.com/0i0/deepme-crawler/main/crawled.repos/h.txt

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Объединяет содержимое ресурсов из списка URL в один файл.
+Пропускает недоступные ссылки.
 """
 
 import argparse
@@ -52,13 +53,13 @@ def download_content(url, timeout):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (compatible; MergeURLsBot/1.0)'}
         resp = requests.get(url, timeout=timeout, headers=headers)
-        resp.raise_for_status()
+        resp.raise_for_status()  # вызовет исключение для 4xx/5xx
         return resp.text
     except requests.exceptions.RequestException as e:
-        print(f"Ошибка при загрузке {url}: {e}", file=sys.stderr)
+        print(f"⚠️  Ошибка при загрузке {url}: {e}", file=sys.stderr)
         return None
     except UnicodeDecodeError:
-        print(f"Не удалось декодировать содержимое {url} как UTF-8", file=sys.stderr)
+        print(f"⚠️  Не удалось декодировать содержимое {url} как UTF-8", file=sys.stderr)
         return None
 
 def main():
@@ -66,31 +67,37 @@ def main():
 
     input_path = Path(args.input)
     if not input_path.exists():
-        print(f"Файл {input_path} не найден", file=sys.stderr)
+        print(f"❌ Файл {input_path} не найден", file=sys.stderr)
         sys.exit(1)
 
     urls = read_urls(input_path)
     if not urls:
-        print("Нет URL для обработки", file=sys.stderr)
+        print("⚠️  Нет URL для обработки", file=sys.stderr)
         sys.exit(0)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    success_count = 0
+    error_count = 0
+
     with open(output_path, 'w', encoding='utf-8') as out_f:
         for idx, url in enumerate(urls):
-            print(f"Обработка {url}...", file=sys.stderr)
+            print(f"📥 Обработка {url}...", file=sys.stderr)
             content = download_content(url, args.timeout)
             if content is None:
+                error_count += 1
                 continue
 
-            if idx > 0:
+            success_count += 1
+            # Добавляем разделитель перед содержимым, кроме первого блока
+            if success_count > 1:
                 separator = args.separator.format(url=url)
                 out_f.write(separator)
-
             out_f.write(content)
 
-    print(f"Готово. Результат сохранён в {output_path}", file=sys.stderr)
+    print(f"\n✅ Готово. Успешно обработано: {success_count}, пропущено: {error_count}", file=sys.stderr)
+    print(f"📄 Результат сохранён в {output_path}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
